@@ -1,0 +1,6 @@
+{
+  "name": "Smart vCard Platform",
+  "description": "An enterprise-grade QR-based digital business card and professional networking platform with dynamic tracking, lead management, and detailed analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
