@@ -14,7 +14,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 // @ts-ignore - vite types have rollup resolution issues with moduleResolution bundler
 import { createServer as createViteServer } from 'vite';
-import type { Request, Response, NextFunction } from 'express';
+import type { Request, Response } from 'express';
 import {
   User, UserRole, Company, BusinessCard, Contact, Lead,
   AnalyticsEvent, SystemNotification, ActivityLog, SocialLinks
@@ -1795,9 +1795,25 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    const assetsPath = join(distPath, 'assets');
+
+    app.use('/assets', express.static(assetsPath, {
+      immutable: true,
+      maxAge: '1y',
+    }));
+
+    app.use(express.static(distPath, {
+      index: false,
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-store');
+        }
+      },
+    }));
+
     // Serve index.html for SPA routes in production
     app.get('*', (req, res) => {
+      res.setHeader('Cache-Control', 'no-store');
       res.sendFile(join(distPath, 'index.html'));
     });
   }

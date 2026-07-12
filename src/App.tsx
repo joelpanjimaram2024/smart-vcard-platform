@@ -72,9 +72,46 @@ function routeToPath(route: AppRoute): string {
   }
 }
 
+function readStorage(key: string): string {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  try {
+    return window.localStorage.getItem(key) || '';
+  } catch (error) {
+    console.warn(`Unable to read localStorage key: ${key}`, error);
+    return '';
+  }
+}
+
+function writeStorage(key: string, value: string) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(key, value);
+  } catch (error) {
+    console.warn(`Unable to write localStorage key: ${key}`, error);
+  }
+}
+
+function removeStorage(key: string) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(key);
+  } catch (error) {
+    console.warn(`Unable to remove localStorage key: ${key}`, error);
+  }
+}
+
 export default function App() {
   const [route, setRoute] = useState<AppRoute>(() => parseRouteFromLocation());
-  const [token, setToken] = useState<string>(() => localStorage.getItem('vcard_token') || '');
+  const [token, setToken] = useState<string>(() => readStorage('vcard_token'));
   const [user, setUser] = useState<AppUser | null>(null);
   const [company, setCompany] = useState<Company | null>(null);
   const [appLoading, setAppLoading] = useState(true);
@@ -83,7 +120,8 @@ export default function App() {
   const [selectedPreviewPublicId, setSelectedPreviewPublicId] = useState<string | null>(null);
 
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>(() => {
-    return (localStorage.getItem('vcard_theme') as 'light' | 'dark') || 'dark';
+    const savedTheme = readStorage('vcard_theme');
+    return savedTheme === 'light' ? 'light' : 'dark';
   });
 
   const [authLoading, setAuthLoading] = useState(false);
@@ -123,7 +161,7 @@ export default function App() {
     } else {
       root.classList.remove('dark');
     }
-    localStorage.setItem('vcard_theme', themeMode);
+    writeStorage('vcard_theme', themeMode);
   }, [themeMode]);
 
   useEffect(() => {
@@ -154,7 +192,7 @@ export default function App() {
       setUser(data.user);
       setCompany(data.user.company || null);
     } catch {
-      localStorage.removeItem('vcard_token');
+      removeStorage('vcard_token');
       setToken('');
       setUser(null);
       setCompany(null);
@@ -207,7 +245,7 @@ export default function App() {
         throw new Error(data.error || 'Login failed. Please check your credentials.');
       }
 
-      localStorage.setItem('vcard_token', data.token);
+      writeStorage('vcard_token', data.token);
       setToken(data.token);
       setUser(data.user);
       setCompany(data.user.company || null);
@@ -236,7 +274,7 @@ export default function App() {
         throw new Error(data.error || 'Registration failed.');
       }
 
-      localStorage.setItem('vcard_token', data.token);
+      writeStorage('vcard_token', data.token);
       setToken(data.token);
       setUser(data.user);
       setCompany(data.user.company || data.company || null);
@@ -250,7 +288,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('vcard_token');
+    removeStorage('vcard_token');
     setToken('');
     setUser(null);
     setCompany(null);

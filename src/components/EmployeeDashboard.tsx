@@ -1,11 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { 
-  CreditCard, Plus, Edit3, Eye, QrCode, Trash2, Heart, Search, 
-  MapPin, Tag, Briefcase, Mail, Phone, ExternalLink, Calendar,
-  BarChart3, Smartphone, Laptop, Tablet, Globe, PlusCircle, Check, Info, RefreshCw,
-  Download, Users, Filter, X
+import {
+  Plus,
+  Edit3,
+  Eye,
+  QrCode,
+  Trash2,
+  Search,
+  Mail,
+  Phone,
+  PlusCircle,
+  RefreshCw,
+  Download,
+  Users,
+  Filter,
+  X,
 } from 'lucide-react';
-import { BusinessCard, Contact, Lead, SocialLinks, ContactButtons, CustomField } from '../types';
+import { BusinessCard, Lead, SocialLinks, ContactButtons } from '../types';
 import { CardDisplay } from './CardTemplates';
 import { apiUrl, readJsonResponse } from '../utils/api';
 import { InteractiveChart } from './InteractiveChart';
@@ -21,7 +31,6 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
   user, token, onSelectCardForQR, onSelectCardForPreview 
 }) => {
   const [cards, setCards] = useState<BusinessCard[]>([]);
-  const [contacts, setContacts] = useState<Contact[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [analytics, setAnalytics] = useState<any>(null);
   
@@ -43,24 +52,21 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
     setError('');
     try {
       const headers = { Authorization: `Bearer ${token}` };
-      const [cardsRes, contactsRes, leadsRes, analyticsRes] = await Promise.all([
+      const [cardsRes, leadsRes, analyticsRes] = await Promise.all([
         fetch(apiUrl('/api/cards'), { headers }),
-        fetch(apiUrl('/api/contacts'), { headers }),
         fetch(apiUrl('/api/leads'), { headers }),
         fetch(apiUrl('/api/analytics'), { headers })
       ]);
 
-      if (!cardsRes.ok || !contactsRes.ok || !leadsRes.ok || !analyticsRes.ok) {
+      if (!cardsRes.ok || !leadsRes.ok || !analyticsRes.ok) {
         throw new Error('Failed to retrieve personal network profile.');
       }
 
       const cardsData = await readJsonResponse(cardsRes, '/api/cards');
-      const contactsData = await readJsonResponse(contactsRes, '/api/contacts');
       const leadsData = await readJsonResponse(leadsRes, '/api/leads');
       const analyticsData = await readJsonResponse(analyticsRes, '/api/analytics');
 
       setCards(cardsData.cards || []);
-      setContacts(contactsData.contacts || []);
       setLeads(leadsData.leads || []);
       setAnalytics(analyticsData || null);
     } catch (err: any) {
