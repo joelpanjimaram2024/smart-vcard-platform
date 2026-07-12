@@ -704,8 +704,22 @@ app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3000);
 const isProductionRuntime = process.env.NODE_ENV === 'production' || process.argv[1]?.endsWith('dist/server.cjs');
 
-// Security middleware
-app.use(helmet());
+// Security middleware with relaxed CSP for Vite dev mode
+// Vite needs 'unsafe-inline' for React HMR preamble and WebSocket for hot reload
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      connectSrc: ["'self'", "ws://localhost:*", "http://localhost:*"],
+      imgSrc: ["'self'", "data:", "https://images.unsplash.com", "https://*.unsplash.com"],
+      fontSrc: ["'self'", "https:", "data:"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+    },
+  },
+}));
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS?.split(',') || '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
