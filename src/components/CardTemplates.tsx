@@ -845,7 +845,7 @@ export const CardPublicView: React.FC<CardPublicViewProps> = ({ cardId, onClose 
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button
                 onClick={() => {
-                  navigator.clipboard.writeText(getPublicCardUrl(data.card.id));
+                  navigator.clipboard.writeText(getPublicCardUrl(data.card.publicId));
                   handleAction('share');
                   alert('Business card URL copied to clipboard!');
                 }}

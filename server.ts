@@ -63,6 +63,135 @@ function verifyToken(token: string): { userId: string; role: UserRole } | null {
   }
 }
 
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48) || 'card';
+}
+
+function generateUniquePublicId(): string {
+  let publicId = '';
+  do {
+    publicId = `pub_${Math.random().toString(36).slice(2, 10)}`;
+  } while (db.cards.some(card => card.publicId === publicId));
+  return publicId;
+}
+
+function generateUniqueSlug(name: string, excludeCardId?: string): string {
+  const base = slugify(name);
+  let suffix = 0;
+  let candidate = base;
+
+  while (db.cards.some(card => card.id !== excludeCardId && card.slug === candidate)) {
+    suffix += 1;
+    candidate = `${base}-${suffix}`;
+  }
+
+  return candidate;
+}
+
+function normalizeCard(card: BusinessCard): BusinessCard {
+  const company = card.companyId ? db.companies.find(entry => entry.id === card.companyId) : null;
+  const publicId = card.publicId || generateUniquePublicId();
+  const companyName = card.companyName || company?.name || '';
+  const slugSource = card.slug || `${card.name}-${publicId.slice(-4)}`;
+
+  return {
+    ...card,
+    publicId,
+    slug: generateUniqueSlug(slugSource, card.id),
+    companyName,
+    address: card.address || '',
+    contactButtons: card.contactButtons || {},
+    socialLinks: card.socialLinks || {},
+    portfolio: card.portfolio || [],
+    customFields: card.customFields || [],
+  };
+}
+
+function backfillCards() {
+  let changed = false;
+  db.cards = db.cards.map(card => {
+    const normalized = normalizeCard(card);
+    if (JSON.stringify(normalized) !== JSON.stringify(card)) {
+      changed = true;
+    }
+    return normalized;
+  });
+
+  if (changed) {
+    saveDb();
+  }
+}
+
+function getGeoDetails(req: Request) {
+  const headerCountry = req.headers['cf-ipcountry']
+    || req.headers['x-vercel-ip-country']
+    || req.headers['x-country']
+    || req.headers['x-geo-country'];
+  const headerCity = req.headers['x-vercel-ip-city'] || req.headers['x-city'];
+
+  const country = typeof headerCountry === 'string' && headerCountry.trim() ? headerCountry : 'Unknown';
+  const city = typeof headerCity === 'string' && headerCity.trim() ? headerCity : 'Unknown';
+
+  return { country, city };
+}
+
+function getDeviceDetails(userAgent: string) {
+  const isMobile = /mobile/i.test(userAgent);
+  const isTablet = /tablet|ipad/i.test(userAgent);
+  const device = isMobile ? 'mobile' : isTablet ? 'tablet' : 'desktop';
+
+  let browser = 'Unknown';
+  if (/chrome/i.test(userAgent) && !/edge|edg/i.test(userAgent)) browser = 'Chrome';
+  else if (/safari/i.test(userAgent) && !/chrome/i.test(userAgent)) browser = 'Safari';
+  else if (/firefox/i.test(userAgent)) browser = 'Firefox';
+  else if (/edge|edg/i.test(userAgent)) browser = 'Edge';
+
+  return { device, browser };
+}
+
+function buildPublicCardResponse(card: BusinessCard) {
+  const owner = db.users.find(user => user.id === card.userId);
+  const company = card.companyId ? db.companies.find(entry => entry.id === card.companyId) : null;
+
+  return {
+    card,
+    owner: owner ? { id: owner.id, name: owner.name, email: owner.email } : null,
+    company: company ? { id: company.id, name: company.name, domain: company.domain, logoUrl: company.logoUrl } : null,
+  };
+}
+
+function findPublicCardByPublicId(publicId: string) {
+  return db.cards.find(card => card.publicId === publicId);
+}
+
+function findPublicCardBySlug(slug: string) {
+  return db.cards.find(card => card.slug === slug);
+}
+
+function recordAnalyticsEvent(card: BusinessCard, type: AnalyticsEvent['type'], req: Request, referrer: string) {
+  const userAgent = req.headers['user-agent'] || '';
+  const { device, browser } = getDeviceDetails(userAgent);
+  const { country, city } = getGeoDetails(req);
+
+  const analyticsEvent: AnalyticsEvent = {
+    id: `ev_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+    cardId: card.id,
+    type,
+    timestamp: new Date().toISOString(),
+    country,
+    city,
+    device: type === 'scan' ? 'mobile' : device,
+    browser,
+    referrer,
+  };
+
+  db.analytics.push(analyticsEvent);
+}
+
 // Database JSON File Path
 const DB_FILE = join(process.cwd(), 'db.json');
 
@@ -173,12 +302,16 @@ function seedDb() {
   db.cards = [
     {
       id: 'crd_ceo',
+      publicId: 'johnathan-sterling-ceo',
+      slug: 'johnathan-sterling',
       userId: 'usr_company_admin',
       companyId: 'comp_acme',
+      companyName: companyAcme.name,
       name: 'Johnathan Sterling',
       title: 'Chief Executive Officer',
       designation: 'CEO & Founder',
       department: 'Executive Suite',
+      address: 'Acme HQ, 410 Market Street, San Francisco, CA',
       bio: 'Visionary business leader with over 20 years of experience scaling global tech enterprise companies and digital product innovations.',
       profilePhoto: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=300&auto=format&fit=crop&q=80',
       companyLogo: companyAcme.logoUrl,
@@ -220,12 +353,16 @@ function seedDb() {
     },
     {
       id: 'crd_alice',
+      publicId: 'alice-smith-ui',
+      slug: 'alice-smith',
       userId: 'usr_employee_alice',
       companyId: 'comp_acme',
+      companyName: companyAcme.name,
       name: 'Alice Smith',
       title: 'Senior Frontend Architect',
       designation: 'Principal UI/UX Architect',
       department: 'Engineering',
+      address: 'Acme Product Studio, 220 Howard Street, San Francisco, CA',
       bio: 'TypeScript ninja and CSS artist. Specializing in highly accessible client experiences, advanced animations, and micro-frontends.',
       profilePhoto: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300&auto=format&fit=crop&q=80',
       companyLogo: companyAcme.logoUrl,
@@ -264,12 +401,16 @@ function seedDb() {
     },
     {
       id: 'crd_bob',
+      publicId: 'robert-vance-sales',
+      slug: 'robert-vance',
       userId: 'usr_employee_bob',
       companyId: 'comp_acme',
+      companyName: companyAcme.name,
       name: 'Robert Vance',
       title: 'Director of Global Sales',
       designation: 'Global Sales Director',
       department: 'Sales & Growth',
+      address: 'Acme Global Sales Hub, 8 King Street, London, UK',
       bio: 'Leading commercial business strategies and strategic client acquisitions. Connect with me to unlock business transformation.',
       profilePhoto: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=300&auto=format&fit=crop&q=80',
       companyLogo: companyAcme.logoUrl,
@@ -304,10 +445,14 @@ function seedDb() {
     },
     {
       id: 'crd_charlie',
+      publicId: 'elena-rostova-brand',
+      slug: 'elena-rostova',
       userId: 'usr_individual_charlie',
+      companyName: 'Freelance Brand',
       name: 'Elena Rostova',
       title: 'Freelance Brand Director',
       designation: 'Creative Director & Designer',
+      address: '14 Shoreditch Works, London, UK',
       bio: 'Designing modern, bold visual brand strategies for fast-growing lifestyle and technology products worldwide.',
       profilePhoto: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80',
       templateId: 'minimalist',
@@ -551,10 +696,13 @@ function saveDb() {
 
 // Initialize database
 loadDb();
+backfillCards();
 
 // Setup Express
 const app = express();
+app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3000);
+const isProductionRuntime = process.env.NODE_ENV === 'production' || process.argv[1]?.endsWith('dist/server.cjs');
 
 // Security middleware
 app.use(helmet());
@@ -631,6 +779,21 @@ function logActivity(userId: string, action: string, details: string, ip?: strin
   saveDb();
 }
 
+function sendPublicCardResponse(req: Request, res: Response, card: BusinessCard, trackView = true) {
+  const owner = db.users.find(user => user.id === card.userId);
+  if (!owner || owner.suspended) {
+    return res.status(403).json({ error: 'This business card is currently inactive' });
+  }
+
+  if (trackView) {
+    card.views = (card.views || 0) + 1;
+    recordAnalyticsEvent(card, 'view', req, req.headers.referer || 'Public Card');
+    saveDb();
+  }
+
+  return res.json(buildPublicCardResponse(card));
+}
+
 // ==========================================
 // API ENDPOINTS
 // ==========================================
@@ -681,51 +844,37 @@ app.post('/api/public/cards/:cardId/lead', (req, res) => {
   res.status(201).json({ success: true, message: 'Lead captured successfully!', lead: newLead });
 });
 
-// Public Route: Single Card lookup (Increment views!)
+// Public Route: Single Card lookup by public identifier for QR visitors
+app.get('/api/public/cards/public/:publicId', (req, res) => {
+  const card = findPublicCardByPublicId(req.params.publicId);
+  if (!card) {
+    return res.status(404).json({ error: 'Business card not found' });
+  }
+
+  const trackView = req.query.trackView !== 'false';
+  return sendPublicCardResponse(req, res, card, trackView);
+});
+
+// Public Route: Optional slug based lookup
+app.get('/api/public/cards/slug/:slug', (req, res) => {
+  const card = findPublicCardBySlug(req.params.slug);
+  if (!card) {
+    return res.status(404).json({ error: 'Business card not found' });
+  }
+
+  const trackView = req.query.trackView !== 'false';
+  return sendPublicCardResponse(req, res, card, trackView);
+});
+
+// Legacy public route by internal card id (kept for owner preview / backward compatibility)
 app.get('/api/public/cards/:id', (req, res) => {
   const card = db.cards.find(c => c.id === req.params.id);
   if (!card) {
     return res.status(404).json({ error: 'Business card not found' });
   }
 
-  // Is the owner suspended?
-  const owner = db.users.find(u => u.id === card.userId);
-  if (!owner || owner.suspended) {
-    return res.status(403).json({ error: 'This business card is currently inactive' });
-  }
-
-  // Increment views
-  card.views = (card.views || 0) + 1;
-  saveDb();
-
-  // Log analytics event
-  const userAgent = req.headers['user-agent'] || '';
-  const isMobile = /mobile/i.test(userAgent);
-  const isTablet = /tablet/i.test(userAgent);
-  const device = isMobile ? 'mobile' : isTablet ? 'tablet' : 'desktop';
-
-  const browsers = ['Chrome', 'Safari', 'Firefox', 'Edge'];
-  let browser = 'Unknown';
-  if (/chrome/i.test(userAgent)) browser = 'Chrome';
-  else if (/safari/i.test(userAgent)) browser = 'Safari';
-  else if (/firefox/i.test(userAgent)) browser = 'Firefox';
-  else if (/edge/i.test(userAgent)) browser = 'Edge';
-
-  const analyticsEvent: AnalyticsEvent = {
-    id: `ev_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
-    cardId: card.id,
-    type: 'view',
-    timestamp: new Date().toISOString(),
-    country: 'United States', // In local sandbox/iframe we stub country geolocation
-    city: 'San Francisco',
-    device,
-    browser,
-    referrer: req.headers.referer || 'Direct'
-  };
-  db.analytics.push(analyticsEvent);
-  saveDb();
-
-  res.json({ card, owner });
+  const trackView = req.query.trackView !== 'false';
+  return sendPublicCardResponse(req, res, card, trackView);
 });
 
 // Public Route: Register Interaction Event (Scans, Downloads, Shares)
@@ -733,42 +882,19 @@ app.post('/api/public/cards/:id/event', (req, res) => {
   const card = db.cards.find(c => c.id === req.params.id);
   if (!card) return res.status(404).json({ error: 'Business card not found' });
 
-  const { type } = req.body; // 'scan' | 'download' | 'share'
+  const { type } = req.body;
   if (!['scan', 'download', 'share'].includes(type)) {
     return res.status(400).json({ error: 'Invalid event type' });
   }
 
-  // Increment counter on card
   if (type === 'scan') card.scans = (card.scans || 0) + 1;
   else if (type === 'download') card.downloads = (card.downloads || 0) + 1;
   else if (type === 'share') card.shares = (card.shares || 0) + 1;
 
-  // Save analytics event
-  const userAgent = req.headers['user-agent'] || '';
-  const isMobile = /mobile/i.test(userAgent);
-  const isTablet = /tablet/i.test(userAgent);
-  const device = isMobile ? 'mobile' : isTablet ? 'tablet' : 'desktop';
-
-  let browser = 'Chrome';
-  if (/safari/i.test(userAgent)) browser = 'Safari';
-  else if (/firefox/i.test(userAgent)) browser = 'Firefox';
-  else if (/edge/i.test(userAgent)) browser = 'Edge';
-
-  const analyticsEvent: AnalyticsEvent = {
-    id: `ev_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
-    cardId: card.id,
-    type,
-    timestamp: new Date().toISOString(),
-    country: 'United States',
-    city: 'San Francisco',
-    device: type === 'scan' ? 'mobile' : device,
-    browser,
-    referrer: type === 'scan' ? 'QR Code' : 'Card Action'
-  };
-  db.analytics.push(analyticsEvent);
+  recordAnalyticsEvent(card, type, req, type === 'scan' ? 'QR Code' : 'Card Action');
   saveDb();
 
-  res.json({ success: true, event: type });
+  return res.json({ success: true, event: type });
 });
 
 // ==========================================
@@ -980,18 +1106,21 @@ app.post('/api/cards', authMiddleware, (req: any, res) => {
 
   if (existingCards.length > 0) {
     const { card, index } = existingCards[0];
-    const updatedCard: BusinessCard = {
+    const updatedCard: BusinessCard = normalizeCard({
       ...card,
       ...cardData,
       id: card.id,
+      publicId: card.publicId,
+      slug: card.slug,
       userId: card.userId,
       companyId: card.companyId,
+      companyName: cardData.companyName || card.companyName || db.companies.find(entry => entry.id === card.companyId)?.name || '',
       views: card.views,
       scans: card.scans,
       downloads: card.downloads,
       shares: card.shares,
       updatedAt: new Date().toISOString()
-    };
+    });
 
     db.cards[index] = updatedCard;
     saveDb();
@@ -1005,17 +1134,22 @@ app.post('/api/cards', authMiddleware, (req: any, res) => {
   }
 
   const cardId = `crd_${Date.now()}`;
-  const newCard: BusinessCard = {
+  const company = user.companyId ? db.companies.find(entry => entry.id === user.companyId) : null;
+  const newCard: BusinessCard = normalizeCard({
     id: cardId,
+    publicId: generateUniquePublicId(),
+    slug: generateUniqueSlug(cardData.slug || cardData.name || user.name),
     userId: user.id,
     companyId: user.companyId,
+    companyName: cardData.companyName || company?.name || '',
     name: cardData.name || user.name,
     title: cardData.title || 'Digital Card',
     designation: cardData.designation || 'Professional',
     department: cardData.department || '',
+    address: cardData.address || '',
     bio: cardData.bio || '',
     profilePhoto: cardData.profilePhoto || '',
-    companyLogo: cardData.companyLogo || '',
+    companyLogo: cardData.companyLogo || company?.logoUrl || '',
     templateId: cardData.templateId || 'modern',
     theme: cardData.theme || {
       primaryColor: '#4f46e5',
@@ -1036,7 +1170,7 @@ app.post('/api/cards', authMiddleware, (req: any, res) => {
     shares: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
-  };
+  });
 
   db.cards.push(newCard);
   saveDb();
@@ -1068,18 +1202,21 @@ app.put('/api/cards/:id', authMiddleware, (req: any, res) => {
     }
   }
 
-  const updatedCard = {
+  const updatedCard: BusinessCard = normalizeCard({
     ...card,
     ...req.body,
     id: card.id, // Immutable
+    publicId: card.publicId,
+    slug: card.slug,
     userId: card.userId,
     companyId: card.companyId,
+    companyName: req.body.companyName || card.companyName || db.companies.find(entry => entry.id === card.companyId)?.name || '',
     views: card.views, // Preserve analytics count
     scans: card.scans,
     downloads: card.downloads,
     shares: card.shares,
     updatedAt: new Date().toISOString()
-  };
+  });
 
   db.cards[cardIndex] = updatedCard;
   saveDb();
@@ -1210,14 +1347,18 @@ app.post('/api/company/invite', authMiddleware, roleGuard(['company_admin']), (r
   // Auto-generate a starter card for this employee
   const cardId = `crd_${Date.now()}`;
   const company = db.companies.find(c => c.id === user.companyId);
-  const starterCard: BusinessCard = {
+  const starterCard: BusinessCard = normalizeCard({
     id: cardId,
+    publicId: generateUniquePublicId(),
+    slug: generateUniqueSlug(name),
     userId: newEmpId,
     companyId: user.companyId,
+    companyName: company?.name || '',
     name,
     title: `${name}'s Card`,
     designation: 'Onboarding Employee',
     department: 'Corporate Onboarding',
+    address: '',
     bio: `Proud employee at ${company?.name || 'Company'}. Professional digital business card.`,
     templateId: 'modern',
     theme: {
@@ -1239,7 +1380,7 @@ app.post('/api/company/invite', authMiddleware, roleGuard(['company_admin']), (r
     shares: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
-  };
+  });
   db.cards.push(starterCard);
 
   saveDb();
@@ -1426,12 +1567,30 @@ app.get('/api/analytics', authMiddleware, (req: any, res) => {
 
   // Filter analytics events by relevant card IDs
   const events = db.analytics.filter(ev => filterCardIds.includes(ev.cardId));
+  const leads = db.leads.filter(lead => filterCardIds.includes(lead.cardId));
+  const cardsById = new Map(db.cards.map(card => [card.id, card]));
 
   // Compute stats
   const totalViews = events.filter(e => e.type === 'view').length;
   const totalScans = events.filter(e => e.type === 'scan').length;
   const totalDownloads = events.filter(e => e.type === 'download').length;
   const totalShares = events.filter(e => e.type === 'share').length;
+  const totalConnectionRequests = leads.length;
+
+  // Since analytics events don't persist a visitor/session id yet, estimate unique visitors
+  // using a stable signature across card, location, device, browser, referrer, and day.
+  const uniqueVisitorKeys = new Set(
+    events.map(event => [
+      event.cardId,
+      event.country || 'Unknown',
+      event.city || 'Unknown',
+      event.device || 'desktop',
+      event.browser || 'Unknown',
+      event.referrer || 'Direct',
+      event.timestamp.split('T')[0],
+    ].join('|')),
+  );
+  const totalUniqueVisitors = uniqueVisitorKeys.size;
 
   // Timeline computation (aggregated by day)
   const timelineMap: Record<string, { date: string; views: number; scans: number; downloads: number }> = {};
@@ -1476,17 +1635,35 @@ app.get('/api/analytics', authMiddleware, (req: any, res) => {
     referrerStats[r] = (referrerStats[r] || 0) + 1;
   });
 
+  const recentScans = events
+    .filter(event => event.type === 'scan')
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .slice(0, 5)
+    .map(event => ({
+      id: event.id,
+      timestamp: event.timestamp,
+      country: event.country || 'Unknown',
+      city: event.city || 'Unknown',
+      device: event.device || 'mobile',
+      browser: event.browser || 'Unknown',
+      referrer: event.referrer || 'QR Code',
+      cardName: cardsById.get(event.cardId)?.name || 'Business Card',
+    }));
+
   res.json({
     stats: {
       views: totalViews,
       scans: totalScans,
       downloads: totalDownloads,
-      shares: totalShares
+      shares: totalShares,
+      uniqueVisitors: totalUniqueVisitors,
+      connectionRequests: totalConnectionRequests,
     },
     timeline,
     countries: Object.entries(countryStats).map(([name, value]) => ({ name, value })),
     devices: Object.entries(deviceStats).map(([name, value]) => ({ name, value })),
-    referrers: Object.entries(referrerStats).map(([name, value]) => ({ name, value }))
+    referrers: Object.entries(referrerStats).map(([name, value]) => ({ name, value })),
+    recentScans,
   });
 });
 
@@ -1610,7 +1787,7 @@ async function startServer() {
     res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  if (!isProductionRuntime) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

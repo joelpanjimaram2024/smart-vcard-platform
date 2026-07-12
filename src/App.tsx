@@ -1,6 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowLeft,
   Bell,
   CreditCard,
   LogOut,
@@ -14,38 +13,74 @@ import { LandingPage } from './components/LandingPage';
 import { SuperAdminDashboard } from './components/SuperAdminDashboard';
 import { CompanyAdminDashboard } from './components/CompanyAdminDashboard';
 import { EmployeeDashboard } from './components/EmployeeDashboard';
-import { CardPublicView } from './components/CardTemplates';
+import { PublicCardPage } from './components/PublicCardPage';
 import { QRGenerator } from './components/QRGenerator';
 import { BusinessCard, Company, SystemNotification, User as AppUser } from './types';
 import { apiUrl, readJsonResponse } from './utils/api';
-import { getPublicCardUrl } from './utils/publicCardUrl';
 
-type ActiveView = 'landing' | 'dashboard' | 'auth' | 'public_card';
 type AuthMode = 'login' | 'register_individual' | 'register_corporate';
 type DevRole = 'super_admin' | 'company_admin' | 'employee' | 'individual' | 'guest';
+type AppRoute =
+  | { name: 'landing' }
+  | { name: 'login' }
+  | { name: 'register_individual' }
+  | { name: 'register_corporate' }
+  | { name: 'dashboard' }
+  | { name: 'public_card'; identifierType: 'publicId' | 'slug'; identifier: string };
 
-function getCardIdFromLocation(): string | null {
-  if (typeof window === 'undefined') return null;
+function parseRouteFromLocation(): AppRoute {
+  if (typeof window === 'undefined') {
+    return { name: 'landing' };
+  }
 
-  const params = new URLSearchParams(window.location.search);
-  const cardId = params.get('cardId') || params.get('card');
-  const hashCardId = window.location.hash.replace('#/card/', '').replace('#', '');
+  const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  const segments = path.split('/').filter(Boolean);
 
-  return cardId || hashCardId || null;
+  if (segments[0] === 'card' && segments[1]) {
+    return { name: 'public_card', identifierType: 'publicId', identifier: decodeURIComponent(segments[1]) };
+  }
+
+  if (segments[0] === 'u' && segments[1]) {
+    return { name: 'public_card', identifierType: 'slug', identifier: decodeURIComponent(segments[1]) };
+  }
+
+  if (path === '/dashboard') return { name: 'dashboard' };
+  if (path === '/login') return { name: 'login' };
+  if (path === '/register/company') return { name: 'register_corporate' };
+  if (path === '/register') return { name: 'register_individual' };
+
+  return { name: 'landing' };
+}
+
+function routeToPath(route: AppRoute): string {
+  switch (route.name) {
+    case 'dashboard':
+      return '/dashboard';
+    case 'login':
+      return '/login';
+    case 'register_individual':
+      return '/register';
+    case 'register_corporate':
+      return '/register/company';
+    case 'public_card':
+      return route.identifierType === 'publicId'
+        ? `/card/${encodeURIComponent(route.identifier)}`
+        : `/u/${encodeURIComponent(route.identifier)}`;
+    case 'landing':
+    default:
+      return '/';
+  }
 }
 
 export default function App() {
+  const [route, setRoute] = useState<AppRoute>(() => parseRouteFromLocation());
   const [token, setToken] = useState<string>(() => localStorage.getItem('vcard_token') || '');
   const [user, setUser] = useState<AppUser | null>(null);
   const [company, setCompany] = useState<Company | null>(null);
   const [appLoading, setAppLoading] = useState(true);
 
-  const [activeView, setActiveView] = useState<ActiveView>('landing');
-  const [authMode, setAuthMode] = useState<AuthMode>('login');
-  const [publicCardId, setPublicCardId] = useState<string | null>(null);
-
   const [selectedCardForQR, setSelectedCardForQR] = useState<BusinessCard | null>(null);
-  const [selectedCardForPreview, setSelectedCardForPreview] = useState<string | null>(null);
+  const [selectedPreviewPublicId, setSelectedPreviewPublicId] = useState<string | null>(null);
 
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>(() => {
     return (localStorage.getItem('vcard_theme') as 'light' | 'dark') || 'dark';
@@ -67,6 +102,20 @@ export default function App() {
     [notifications],
   );
 
+  const authMode: AuthMode = route.name === 'register_corporate'
+    ? 'register_corporate'
+    : route.name === 'register_individual'
+      ? 'register_individual'
+      : 'login';
+
+  const navigateTo = (nextRoute: AppRoute, replace = false) => {
+    if (typeof window !== 'undefined') {
+      const method = replace ? 'replaceState' : 'pushState';
+      window.history[method]({}, document.title, routeToPath(nextRoute));
+    }
+    setRoute(nextRoute);
+  };
+
   useEffect(() => {
     const root = window.document.documentElement;
     if (themeMode === 'dark') {
@@ -78,26 +127,10 @@ export default function App() {
   }, [themeMode]);
 
   useEffect(() => {
-    const syncPublicRoute = () => {
-      const cardId = getCardIdFromLocation();
-      if (cardId && cardId.length > 2) {
-        setPublicCardId(cardId);
-        setActiveView('public_card');
-
-        const params = new URLSearchParams(window.location.search);
-        if (!params.get('cardId') && params.get('card')) {
-          window.history.replaceState({}, document.title, getPublicCardUrl(cardId));
-        }
-      } else {
-        setPublicCardId(null);
-        setActiveView((current) => (current === 'public_card' ? (token ? 'dashboard' : 'landing') : current));
-      }
-    };
-
-    syncPublicRoute();
-    window.addEventListener('popstate', syncPublicRoute);
-    return () => window.removeEventListener('popstate', syncPublicRoute);
-  }, [token]);
+    const syncRoute = () => setRoute(parseRouteFromLocation());
+    window.addEventListener('popstate', syncRoute);
+    return () => window.removeEventListener('popstate', syncRoute);
+  }, []);
 
   const fetchSessionProfile = async (sessionToken: string) => {
     if (!sessionToken) {
@@ -120,13 +153,14 @@ export default function App() {
       const data = await readJsonResponse(res, '/api/auth/me');
       setUser(data.user);
       setCompany(data.user.company || null);
-      setActiveView((current) => (current === 'public_card' ? current : 'dashboard'));
     } catch {
       localStorage.removeItem('vcard_token');
       setToken('');
       setUser(null);
       setCompany(null);
-      setActiveView(publicCardId ? 'public_card' : 'landing');
+      if (route.name === 'dashboard') {
+        navigateTo({ name: 'login' }, true);
+      }
     } finally {
       setAppLoading(false);
     }
@@ -137,11 +171,16 @@ export default function App() {
       fetchSessionProfile(token);
     } else {
       setAppLoading(false);
-      if (!publicCardId) {
-        setActiveView('landing');
-      }
+      setUser(null);
+      setCompany(null);
     }
   }, [token]);
+
+  useEffect(() => {
+    if (!appLoading && route.name === 'dashboard' && !user) {
+      navigateTo({ name: 'login' }, true);
+    }
+  }, [appLoading, route, user]);
 
   const resetAuthForm = () => {
     setNameInput('');
@@ -172,8 +211,8 @@ export default function App() {
       setToken(data.token);
       setUser(data.user);
       setCompany(data.user.company || null);
-      setActiveView('dashboard');
       resetAuthForm();
+      navigateTo({ name: 'dashboard' }, true);
     } catch (error: any) {
       setAuthError(error.message || 'Network error. Please try again.');
     } finally {
@@ -201,8 +240,8 @@ export default function App() {
       setToken(data.token);
       setUser(data.user);
       setCompany(data.user.company || data.company || null);
-      setActiveView('dashboard');
       resetAuthForm();
+      navigateTo({ name: 'dashboard' }, true);
     } catch (error: any) {
       setAuthError(error.message || 'Network error.');
     } finally {
@@ -215,10 +254,10 @@ export default function App() {
     setToken('');
     setUser(null);
     setCompany(null);
-    setSelectedCardForPreview(null);
+    setSelectedPreviewPublicId(null);
     setSelectedCardForQR(null);
     setShowNotificationsDropdown(false);
-    setActiveView(publicCardId ? 'public_card' : 'landing');
+    navigateTo({ name: 'landing' }, true);
   };
 
   const handleDeveloperBypass = async (role: DevRole) => {
@@ -237,16 +276,6 @@ export default function App() {
     await performLogin(devEmails[role], 'dev-access');
   };
 
-  const closePublicCard = () => {
-    window.history.pushState({}, document.title, window.location.pathname);
-    setPublicCardId(null);
-    setActiveView(user ? 'dashboard' : 'landing');
-  };
-
-  const openPreview = (cardId: string) => {
-    setSelectedCardForPreview(cardId);
-  };
-
   const clearAllNotifications = () => {
     setNotifications((current) => current.map((notification) => ({ ...notification, isRead: true })));
   };
@@ -260,30 +289,35 @@ export default function App() {
     );
   }
 
+  const showOwnerChrome = user && route.name === 'dashboard';
+  const showDevAccessPortal = import.meta.env.DEV && !user && route.name !== 'public_card' && !selectedPreviewPublicId;
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#09090b] text-slate-900 dark:text-slate-200 transition-colors duration-300 font-sans">
-      <div className="fixed bottom-4 right-4 z-40 bg-[#111113]/90 text-white rounded-2xl border border-white/10 p-4 shadow-2xl max-w-xs glass-effect">
-        <div className="flex items-center gap-1.5 border-b border-white/10 pb-2 mb-2">
-          <Terminal className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-          <span className="text-[10px] font-black uppercase tracking-widest font-mono">Dev Access Portal</span>
+      {showDevAccessPortal && (
+        <div className="fixed bottom-4 right-4 z-40 bg-[#111113]/90 text-white rounded-2xl border border-white/10 p-4 shadow-2xl max-w-xs glass-effect">
+          <div className="flex items-center gap-1.5 border-b border-white/10 pb-2 mb-2">
+            <Terminal className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+            <span className="text-[10px] font-black uppercase tracking-widest font-mono">Dev Access Portal</span>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5 text-[10px] font-bold">
+            <button onClick={() => handleDeveloperBypass('super_admin')} className="px-2 py-1.5 rounded bg-rose-950/40 text-rose-300 border border-rose-900/40 hover:brightness-110 cursor-pointer">● Super Admin</button>
+            <button onClick={() => handleDeveloperBypass('company_admin')} className="px-2 py-1.5 rounded bg-indigo-950/40 text-indigo-300 border border-indigo-900/40 hover:brightness-110 cursor-pointer">● Org Admin</button>
+            <button onClick={() => handleDeveloperBypass('employee')} className="px-2 py-1.5 rounded bg-emerald-950/40 text-emerald-300 border border-emerald-900/40 hover:brightness-110 cursor-pointer">● Employee</button>
+            <button onClick={() => handleDeveloperBypass('individual')} className="px-2 py-1.5 rounded bg-amber-950/40 text-amber-300 border border-amber-900/40 hover:brightness-110 cursor-pointer">● Individual</button>
+            <button onClick={() => handleDeveloperBypass('guest')} className="col-span-2 px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 cursor-pointer">← Reset to Guest</button>
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-1.5 text-[10px] font-bold">
-          <button onClick={() => handleDeveloperBypass('super_admin')} className="px-2 py-1.5 rounded bg-rose-950/40 text-rose-300 border border-rose-900/40 hover:brightness-110 cursor-pointer">● Super Admin</button>
-          <button onClick={() => handleDeveloperBypass('company_admin')} className="px-2 py-1.5 rounded bg-indigo-950/40 text-indigo-300 border border-indigo-900/40 hover:brightness-110 cursor-pointer">● Org Admin</button>
-          <button onClick={() => handleDeveloperBypass('employee')} className="px-2 py-1.5 rounded bg-emerald-950/40 text-emerald-300 border border-emerald-900/40 hover:brightness-110 cursor-pointer">● Employee</button>
-          <button onClick={() => handleDeveloperBypass('individual')} className="px-2 py-1.5 rounded bg-amber-950/40 text-amber-300 border border-amber-900/40 hover:brightness-110 cursor-pointer">● Individual</button>
-          <button onClick={() => handleDeveloperBypass('guest')} className="col-span-2 px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-md border border-slate-800 cursor-pointer">← Reset to Guest</button>
-        </div>
-      </div>
+      )}
 
-      {user && activeView !== 'public_card' && (
+      {showOwnerChrome && (
         <header className="bg-white dark:bg-[#111113] border-b border-gray-200 dark:border-white/5 py-4 px-6 relative z-30 shadow-sm">
           <div className="max-w-7xl mx-auto flex justify-between items-center gap-4">
             <div className="flex items-center gap-3">
-              <button onClick={() => setActiveView('dashboard')} className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-white/5 transition-colors">
+              <button onClick={() => navigateTo({ name: 'dashboard' }, true)} className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-white/5 transition-colors">
                 <CreditCard className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
               </button>
-              <span className="text-lg font-bold text-slate-800 dark:text-white">{company?.name || user.name || 'vCard'}</span>
+              <span className="text-lg font-bold text-slate-800 dark:text-white">{company?.name || user?.name || 'vCard'}</span>
             </div>
 
             <div className="flex items-center gap-3">
@@ -332,22 +366,14 @@ export default function App() {
       )}
 
       <main className="relative z-10">
-        {activeView === 'landing' && (
+        {route.name === 'landing' && (
           <LandingPage
-            onGetStarted={(role) => {
-              setAuthMode(role === 'company_admin' ? 'register_corporate' : 'register_individual');
-              setActiveView('auth');
-              setAuthError('');
-            }}
-            onLogin={() => {
-              setAuthMode('login');
-              setActiveView('auth');
-              setAuthError('');
-            }}
+            onGetStarted={(role) => navigateTo({ name: role === 'company_admin' ? 'register_corporate' : 'register_individual' })}
+            onLogin={() => navigateTo({ name: 'login' })}
           />
         )}
 
-        {activeView === 'auth' && (
+        {(route.name === 'login' || route.name === 'register_individual' || route.name === 'register_corporate') && (
           <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4 font-sans">
             <div className="w-full max-w-md">
               <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-8 shadow-sm">
@@ -451,8 +477,8 @@ export default function App() {
                 <p className="text-center text-xs text-slate-500 dark:text-slate-400 mt-4">
                   {authMode === 'login' ? (
                     <>
-                      Don't have an account?{' '}
-                      <button onClick={() => setAuthMode('register_individual')} className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline">
+                      Don&apos;t have an account?{' '}
+                      <button onClick={() => navigateTo({ name: 'register_individual' })} className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline">
                         Sign up for free
                       </button>
                       .
@@ -460,7 +486,7 @@ export default function App() {
                   ) : (
                     <>
                       Already signed up?{' '}
-                      <button onClick={() => setAuthMode('login')} className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline">
+                      <button onClick={() => navigateTo({ name: 'login' })} className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline">
                         Sign in instead
                       </button>
                       .
@@ -469,7 +495,7 @@ export default function App() {
                 </p>
 
                 <div className="mt-6 text-center text-xs text-slate-400 dark:text-slate-500">
-                  <button onClick={() => setActiveView('landing')} className="hover:underline">
+                  <button onClick={() => navigateTo({ name: 'landing' })} className="hover:underline">
                     Back to home
                   </button>
                 </div>
@@ -478,7 +504,7 @@ export default function App() {
           </div>
         )}
 
-        {activeView === 'dashboard' && user && (
+        {route.name === 'dashboard' && user && (
           <div className="max-w-7xl mx-auto p-4 md:p-6">
             {user.role === 'super_admin' && <SuperAdminDashboard token={token} />}
             {user.role === 'company_admin' && (
@@ -494,23 +520,14 @@ export default function App() {
                 user={user}
                 token={token}
                 onSelectCardForQR={setSelectedCardForQR}
-                onSelectCardForPreview={openPreview}
+                onSelectCardForPreview={setSelectedPreviewPublicId}
               />
             )}
           </div>
         )}
 
-        {activeView === 'public_card' && publicCardId && (
-          <>
-            <button
-              onClick={closePublicCard}
-              className="fixed top-4 left-4 z-[60] backdrop-blur-md bg-white/70 dark:bg-slate-900/70 border border-white/20 rounded-xl p-2.5 shadow-lg flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-900"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </button>
-            <CardPublicView cardId={publicCardId} onClose={closePublicCard} />
-          </>
+        {route.name === 'public_card' && (
+          <PublicCardPage identifier={route.identifier} identifierType={route.identifierType} />
         )}
       </main>
 
@@ -520,7 +537,7 @@ export default function App() {
             <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
               <div>
                 <h3 className="font-bold text-sm text-slate-900 dark:text-white">QR Code for {selectedCardForQR.name}</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">This QR now opens the public profile bound to this specific card.</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">This QR opens the standalone public visitor interface for this card only.</p>
               </div>
               <button onClick={() => setSelectedCardForQR(null)} className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200">
                 <X className="w-4 h-4" />
@@ -533,8 +550,24 @@ export default function App() {
         </div>
       )}
 
-      {selectedCardForPreview && (
-        <CardPublicView cardId={selectedCardForPreview} onClose={() => setSelectedCardForPreview(null)} />
+      {selectedPreviewPublicId && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => setSelectedPreviewPublicId(null)}>
+          <div className="relative bg-white dark:bg-slate-900 rounded-3xl w-full max-w-6xl max-h-[92vh] overflow-y-auto shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <button
+              onClick={() => setSelectedPreviewPublicId(null)}
+              className="absolute top-4 right-4 z-50 p-2 rounded-full bg-black/10 dark:bg-white/10 text-slate-700 dark:text-slate-200"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <PublicCardPage
+              identifier={selectedPreviewPublicId}
+              identifierType="publicId"
+              embedded
+              trackScan={false}
+              onBack={() => setSelectedPreviewPublicId(null)}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

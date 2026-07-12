@@ -1,13 +1,9 @@
-export function getPublicCardUrl(cardId: string): string {
-  const query = `cardId=${encodeURIComponent(cardId)}`;
+export function getPublicCardUrl(publicId: string): string {
+  const path = `/card/${encodeURIComponent(publicId)}`;
 
   if (typeof window === 'undefined') {
-    return `/?${query}`;
+    return path;
   }
 
-  const url = new URL(window.location.href);
-  url.hash = '';
-  url.search = '';
-  url.searchParams.set('cardId', cardId);
-  return url.toString();
+  return new URL(path, window.location.origin).toString();
 }

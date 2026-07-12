@@ -56,12 +56,16 @@ export interface CustomField {
 
 export interface BusinessCard {
   id: string;
+  publicId: string;
+  slug: string;
   userId: string;
   companyId?: string;
+  companyName?: string;
   name: string;
   title: string; // e.g., "Alice Smith"
   designation: string; // e.g., "Senior Software Engineer"
   department?: string; // e.g., "Engineering"
+  address?: string;
   bio?: string;
   profilePhoto?: string; // base64 or URL
   companyLogo?: string; // base64 or URL

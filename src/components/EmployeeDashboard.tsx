@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { 
   CreditCard, Plus, Edit3, Eye, QrCode, Trash2, Heart, Search, 
   MapPin, Tag, Briefcase, Mail, Phone, ExternalLink, Calendar,
-  BarChart3, Smartphone, Laptop, Tablet, Globe, PlusCircle, Check, Info, RefreshCw
+  BarChart3, Smartphone, Laptop, Tablet, Globe, PlusCircle, Check, Info, RefreshCw,
+  Download, Users, Filter, X
 } from 'lucide-react';
 import { BusinessCard, Contact, Lead, SocialLinks, ContactButtons, CustomField } from '../types';
 import { CardDisplay } from './CardTemplates';
-import { apiUrl } from '../utils/api';
+import { apiUrl, readJsonResponse } from '../utils/api';
 import { InteractiveChart } from './InteractiveChart';
 
 interface EmployeeDashboardProps {
@@ -27,19 +28,15 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const [activeTab, setActiveTab] = useState<'cards' | 'builder' | 'contacts' | 'leads' | 'analytics'>('cards');
+  const [activeTab, setActiveTab] = useState<'cards' | 'builder' | 'crm'>('cards');
   const [editingCard, setEditingCard] = useState<BusinessCard | null>(null);
-
-  // Contacts States
-  const [contactSearch, setContactSearch] = useState('');
-  const [contactCategoryFilter, setContactCategoryFilter] = useState('All');
-  const [showAddContact, setShowAddContact] = useState(false);
-  const [newContact, setNewContact] = useState({
-    name: '', email: '', phone: '', company: '', title: '', note: '', category: 'Personal', tags: ''
-  });
+  const [leadSearch, setLeadSearch] = useState('');
+  const [leadStatusFilter, setLeadStatusFilter] = useState<'all' | Lead['status']>('all');
+  const [leadSourceFilter, setLeadSourceFilter] = useState('all');
+  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
 
   // Metrics Metric Filter
-  const [selectedMetric, setSelectedMetric] = useState<'views' | 'scans' | 'downloads'>('views');
+  const [selectedMetric, setSelectedMetric] = useState<'views' | 'scans' | 'downloads'>('scans');
 
   const fetchWorkspaceData = async () => {
     setLoading(true);
@@ -57,10 +54,10 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
         throw new Error('Failed to retrieve personal network profile.');
       }
 
-      const cardsData = await cardsRes.json();
-      const contactsData = await contactsRes.json();
-      const leadsData = await leadsRes.json();
-      const analyticsData = await analyticsRes.json();
+      const cardsData = await readJsonResponse(cardsRes, '/api/cards');
+      const contactsData = await readJsonResponse(contactsRes, '/api/contacts');
+      const leadsData = await readJsonResponse(leadsRes, '/api/leads');
+      const analyticsData = await readJsonResponse(analyticsRes, '/api/analytics');
 
       setCards(cardsData.cards || []);
       setContacts(contactsData.contacts || []);
@@ -91,12 +88,16 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
 
     const newStarter: BusinessCard = {
       id: '',
+      publicId: '',
+      slug: '',
       userId: user.id,
       companyId: user.companyId || '',
+      companyName: user.company?.name || '',
       name: user.name,
       title: 'Digital Card',
       designation: 'Senior Consultant',
       department: '',
+      address: '',
       bio: 'Connect with me to build elite, smart enterprise innovations.',
       profilePhoto: '',
       companyLogo: '',
@@ -177,66 +178,6 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
       });
     };
     reader.readAsDataURL(file);
-  };
-
-  // Contacts CRUD
-  const handleAddContact = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newContact.name) return;
-
-    try {
-      const res = await fetch(apiUrl('/api/contacts'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          ...newContact,
-          tags: newContact.tags ? newContact.tags.split(',').map(t => t.trim()) : []
-        })
-      });
-
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.error || 'Failed to add contact');
-
-      setShowAddContact(false);
-      setNewContact({ name: '', email: '', phone: '', company: '', title: '', note: '', category: 'Personal', tags: '' });
-      fetchWorkspaceData();
-    } catch (err: any) {
-      alert(err.message);
-    }
-  };
-
-  const handleToggleFavoriteContact = async (con: Contact) => {
-    try {
-      const res = await fetch(apiUrl(`/api/contacts/${con.id}`), {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ isFavorite: !con.isFavorite })
-      });
-      if (!res.ok) throw new Error('Action failed');
-      fetchWorkspaceData();
-    } catch (err: any) {
-      alert(err.message);
-    }
-  };
-
-  const handleDeleteContact = async (contactId: string) => {
-    if (!confirm('Remove this saved contact connection?')) return;
-    try {
-      const res = await fetch(apiUrl(`/api/contacts/${contactId}`), {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!res.ok) throw new Error('Delete failed');
-      fetchWorkspaceData();
-    } catch (err: any) {
-      alert(err.message);
-    }
   };
 
   // Lead Conversion status PUT
@@ -345,16 +286,34 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
     );
   }
 
-  // Filtered contacts
-  const filteredContacts = contacts.filter(con => {
-    const matchesSearch = con.name.toLowerCase().includes(contactSearch.toLowerCase()) || 
-                          con.company.toLowerCase().includes(contactSearch.toLowerCase()) ||
-                          con.note.toLowerCase().includes(contactSearch.toLowerCase());
-    
-    if (contactCategoryFilter === 'All') return matchesSearch;
-    if (contactCategoryFilter === 'Favorites') return matchesSearch && con.isFavorite;
-    return matchesSearch && con.category === contactCategoryFilter;
-  });
+  const analyticsStats = analytics?.stats || {};
+  const recentScans = analytics?.recentScans || [];
+  const leadSourceOptions = useMemo(
+    () => ['all', ...Array.from(new Set(leads.map((lead) => lead.source).filter(Boolean)))],
+    [leads],
+  );
+
+  const filteredLeads = useMemo(() => {
+    return leads.filter((lead) => {
+      const matchesSearch = [lead.name, lead.company, lead.email, lead.phone, lead.notes]
+        .filter(Boolean)
+        .some((value) => value.toLowerCase().includes(leadSearch.toLowerCase()));
+      const matchesStatus = leadStatusFilter === 'all' || lead.status === leadStatusFilter;
+      const matchesSource = leadSourceFilter === 'all' || lead.source === leadSourceFilter;
+      return matchesSearch && matchesStatus && matchesSource;
+    });
+  }, [leadSearch, leadSourceFilter, leadStatusFilter, leads]);
+
+  const hasAnalyticsData = Boolean(
+    analytics && (
+      (analyticsStats.views || 0) > 0 ||
+      (analyticsStats.scans || 0) > 0 ||
+      (analyticsStats.uniqueVisitors || 0) > 0 ||
+      (analyticsStats.downloads || 0) > 0 ||
+      (analyticsStats.connectionRequests || 0) > 0 ||
+      recentScans.length > 0
+    )
+  );
 
   return (
     <div className="space-y-6">
@@ -376,22 +335,10 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
           vCard Live Designer
         </button>
         <button
-          onClick={() => setActiveTab('contacts')}
-          className={`pb-2.5 text-xs font-bold uppercase tracking-wider cursor-pointer border-b-2 whitespace-nowrap transition-all ${activeTab === 'contacts' ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
+          onClick={() => setActiveTab('crm')}
+          className={`pb-2.5 text-xs font-bold uppercase tracking-wider cursor-pointer border-b-2 whitespace-nowrap transition-all ${activeTab === 'crm' ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
         >
-          Connections Address Book ({contacts.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('leads')}
-          className={`pb-2.5 text-xs font-bold uppercase tracking-wider cursor-pointer border-b-2 whitespace-nowrap transition-all ${activeTab === 'leads' ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
-        >
-          My Captured Leads ({leads.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('analytics')}
-          className={`pb-2.5 text-xs font-bold uppercase tracking-wider cursor-pointer border-b-2 whitespace-nowrap transition-all ${activeTab === 'analytics' ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
-        >
-          Performance Stats
+          Connections CRM ({leads.length})
         </button>
       </div>
 
@@ -459,7 +406,7 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
                     <span>Edit</span>
                   </button>
                   <button
-                    onClick={() => onSelectCardForPreview(c.id)}
+                    onClick={() => onSelectCardForPreview(c.publicId)}
                     className="py-1.5 bg-gray-50 hover:bg-gray-100 dark:bg-[#161618] dark:hover:bg-[#111113] dark:text-white rounded border border-gray-200 dark:border-white/5 text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer"
                     title="View public"
                   >
@@ -558,6 +505,27 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
                       type="text"
                       value={editingCard.department || ''}
                       onChange={e => setEditingCard({ ...editingCard, department: e.target.value })}
+                      className="w-full text-xs p-2 rounded border border-gray-200 dark:border-white/10 bg-transparent dark:text-white focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <div>
+                    <label className="block text-[9px] uppercase tracking-wider font-bold text-gray-500 mb-1">Company Name</label>
+                    <input
+                      type="text"
+                      value={editingCard.companyName || ''}
+                      onChange={e => setEditingCard({ ...editingCard, companyName: e.target.value })}
+                      className="w-full text-xs p-2 rounded border border-gray-200 dark:border-white/10 bg-transparent dark:text-white focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] uppercase tracking-wider font-bold text-gray-500 mb-1">Address</label>
+                    <input
+                      type="text"
+                      value={editingCard.address || ''}
+                      onChange={e => setEditingCard({ ...editingCard, address: e.target.value })}
                       className="w-full text-xs p-2 rounded border border-gray-200 dark:border-white/10 bg-transparent dark:text-white focus:outline-none focus:border-indigo-500"
                     />
                   </div>
@@ -814,380 +782,293 @@ export const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({
         </div>
       )}
 
-      {/* Tab: Connections Address Book */}
-      {activeTab === 'contacts' && (
-        <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-gray-150 dark:border-white/5 pb-3">
+      {/* Tab: Connections CRM */}
+      {activeTab === 'crm' && (
+        <div className="space-y-6">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
             <div>
-              <h3 className="font-extrabold text-gray-900 dark:text-white text-base">Professional Connections Address Book</h3>
-              <p className="text-xs text-gray-500">Query and tag your verified professional contacts list.</p>
+              <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-indigo-600 dark:text-indigo-400">Modern CRM Dashboard</p>
+              <h3 className="mt-2 text-2xl font-black text-gray-900 dark:text-white">Connections Dashboard</h3>
+              <p className="mt-2 max-w-2xl text-sm text-gray-500 dark:text-gray-400">
+                Track everyone who scanned your QR code and submitted the networking form, then manage follow-ups from one place.
+              </p>
             </div>
             <button
-              onClick={() => setShowAddContact(!showAddContact)}
-              className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 shadow-sm cursor-pointer"
+              onClick={fetchWorkspaceData}
+              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-bold text-gray-700 shadow-sm transition hover:bg-gray-50 dark:bg-[#111113] dark:border-white/10 dark:text-gray-200"
             >
-              <Plus className="w-4 h-4" />
-              {showAddContact ? 'Close Form' : 'Register Manual Contact'}
+              <RefreshCw className="w-4 h-4" />
+              Refresh Data
             </button>
           </div>
 
-          {/* Add contact manual form */}
-          {showAddContact && (
-            <div className="p-5 bg-white dark:bg-[#111113] rounded-xl border border-gray-150 dark:border-white/5 shadow-sm max-w-2xl">
-              <h4 className="font-bold text-gray-900 dark:text-white text-xs uppercase mb-3 text-indigo-600 font-mono">// New Connection Registration</h4>
-              <form onSubmit={handleAddContact} className="space-y-3 text-xs">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[9px] uppercase tracking-wider font-bold text-gray-500 mb-1">Contact Name *</label>
-                    <input
-                      type="text"
-                      required
-                      value={newContact.name}
-                      onChange={e => setNewContact({ ...newContact, name: e.target.value })}
-                      placeholder="e.g. Elena Rostova"
-                      className="w-full p-2 border dark:border-white/10 bg-transparent dark:text-white rounded focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[9px] uppercase tracking-wider font-bold text-gray-500 mb-1">Company / Org</label>
-                    <input
-                      type="text"
-                      value={newContact.company}
-                      onChange={e => setNewContact({ ...newContact, company: e.target.value })}
-                      placeholder="e.g. Freelance Design"
-                      className="w-full p-2 border dark:border-white/10 bg-transparent dark:text-white rounded focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[9px] uppercase tracking-wider font-bold text-gray-500 mb-1">Designation Title</label>
-                    <input
-                      type="text"
-                      value={newContact.title}
-                      onChange={e => setNewContact({ ...newContact, title: e.target.value })}
-                      placeholder="e.g. Creative Director"
-                      className="w-full p-2 border dark:border-white/10 bg-transparent dark:text-white rounded focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[9px] uppercase tracking-wider font-bold text-gray-500 mb-1">Email Address</label>
-                    <input
-                      type="email"
-                      value={newContact.email}
-                      onChange={e => setNewContact({ ...newContact, email: e.target.value })}
-                      placeholder="e.g. elena@gmail.com"
-                      className="w-full p-2 border dark:border-white/10 bg-transparent dark:text-white rounded focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className="block text-[9px] uppercase tracking-wider font-bold text-gray-500 mb-1">Category</label>
-                    <select
-                      value={newContact.category}
-                      onChange={e => setNewContact({ ...newContact, category: e.target.value })}
-                      className="w-full p-2 border dark:border-white/10 bg-transparent dark:text-white rounded"
-                    >
-                      <option value="Client">Client Partner</option>
-                      <option value="Partner">Strategic Partner</option>
-                      <option value="Lead">Lead Prospect</option>
-                      <option value="Personal">Personal Network</option>
-                    </select>
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block text-[9px] uppercase tracking-wider font-bold text-gray-500 mb-1">Comma-separated Tags</label>
-                    <input
-                      type="text"
-                      value={newContact.tags}
-                      onChange={e => setNewContact({ ...newContact, tags: e.target.value })}
-                      placeholder="Design, Consultant, Top Tier"
-                      className="w-full p-2 border dark:border-white/10 bg-transparent dark:text-white rounded"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[9px] uppercase tracking-wider font-bold text-gray-500 mb-1">Private Contact Note</label>
-                  <textarea
-                    value={newContact.note}
-                    onChange={e => setNewContact({ ...newContact, note: e.target.value })}
-                    rows={2}
-                    className="w-full p-2 border dark:border-white/10 bg-transparent dark:text-white rounded resize-none"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-bold shadow-sm cursor-pointer"
-                >
-                  Register Connection
-                </button>
-              </form>
+          {error && (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/30 dark:bg-rose-950/20 dark:text-rose-300">
+              {error}
             </div>
           )}
 
-          {/* Connections Filtering Ribbon */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-              <input
-                type="text"
-                value={contactSearch}
-                onChange={e => setContactSearch(e.target.value)}
-                placeholder="Search by contact name, company, notes..."
-                className="w-full text-xs pl-9 pr-4 py-2.5 bg-white dark:bg-[#111113] border border-gray-250 dark:border-white/5 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:text-white"
-              />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-gray-150 bg-white p-5 shadow-sm dark:border-white/5 dark:bg-[#111113]">
+              <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+                <QrCode className="w-4 h-4" />
+                <span className="text-[11px] font-bold uppercase tracking-wider">Total QR Scans</span>
+              </div>
+              <p className="mt-3 text-3xl font-black text-gray-900 dark:text-white">{analyticsStats.scans || 0}</p>
             </div>
-
-            <div className="flex gap-1.5 overflow-x-auto">
-              {['All', 'Favorites', 'Client', 'Partner', 'Lead', 'Personal'].map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setContactCategoryFilter(cat)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold tracking-wider cursor-pointer transition-all ${contactCategoryFilter === cat ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-[#111113] text-gray-500 hover:bg-gray-50 border border-gray-150 dark:border-white/5 dark:text-gray-300'}`}
-                >
-                  {cat}
-                </button>
-              ))}
+            <div className="rounded-2xl border border-gray-150 bg-white p-5 shadow-sm dark:border-white/5 dark:bg-[#111113]">
+              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                <Users className="w-4 h-4" />
+                <span className="text-[11px] font-bold uppercase tracking-wider">Unique Visitors</span>
+              </div>
+              <p className="mt-3 text-3xl font-black text-gray-900 dark:text-white">{analyticsStats.uniqueVisitors || 0}</p>
+            </div>
+            <div className="rounded-2xl border border-gray-150 bg-white p-5 shadow-sm dark:border-white/5 dark:bg-[#111113]">
+              <div className="flex items-center gap-2 text-violet-600 dark:text-violet-400">
+                <Mail className="w-4 h-4" />
+                <span className="text-[11px] font-bold uppercase tracking-wider">Contacts Collected</span>
+              </div>
+              <p className="mt-3 text-3xl font-black text-gray-900 dark:text-white">{leads.length}</p>
+            </div>
+            <div className="rounded-2xl border border-gray-150 bg-white p-5 shadow-sm dark:border-white/5 dark:bg-[#111113]">
+              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+                <Download className="w-4 h-4" />
+                <span className="text-[11px] font-bold uppercase tracking-wider">Contact Downloads</span>
+              </div>
+              <p className="mt-3 text-3xl font-black text-gray-900 dark:text-white">{analyticsStats.downloads || 0}</p>
             </div>
           </div>
 
-          {/* Connections Grid Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredContacts.map((con) => (
-              <div 
-                key={con.id}
-                className="p-5 bg-white dark:bg-[#111113] rounded-2xl border border-gray-150 dark:border-white/5 shadow-sm flex flex-col justify-between"
-              >
+          {hasAnalyticsData && (
+            <div className="rounded-2xl border border-gray-150 bg-white p-6 shadow-sm dark:border-white/5 dark:bg-[#111113]">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <div className="flex justify-between items-start mb-2">
-                    <span className="px-2 py-0.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 font-bold uppercase tracking-wider text-[9px] rounded">
-                      {con.category}
-                    </span>
-                    <button 
-                      onClick={() => handleToggleFavoriteContact(con)}
-                      className="p-1 text-gray-400 hover:text-rose-500 transition-all cursor-pointer"
-                    >
-                      <Heart className={`w-4 h-4 ${con.isFavorite ? 'fill-rose-500 text-rose-500' : ''}`} />
-                    </button>
-                  </div>
-
-                  <h4 className="font-extrabold text-sm text-gray-900 dark:text-white">{con.name}</h4>
-                  <p className="text-xs text-gray-400">{con.title} at <span className="font-semibold text-gray-700 dark:text-gray-300">{con.company || 'Direct Network'}</span></p>
-                  
-                  {con.note && (
-                    <div className="mt-3 p-2 bg-gray-50 dark:bg-[#161618] rounded border border-gray-100 dark:border-white/5 text-[11px] text-gray-500 dark:text-gray-400 italic">
-                      "{con.note}"
-                    </div>
-                  )}
-
-                  {/* Contact rows info */}
-                  <div className="space-y-1 mt-4 text-[11px] text-gray-600 dark:text-gray-300">
-                    {con.email && (
-                      <div className="flex items-center gap-2">
-                        <Mail className="w-3.5 h-3.5 text-gray-400" />
-                        <span>{con.email}</span>
-                      </div>
-                    )}
-                    {con.phone && (
-                      <div className="flex items-center gap-2">
-                        <Phone className="w-3.5 h-3.5 text-gray-400" />
-                        <span>{con.phone}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* tags matrix */}
-                  {con.tags && con.tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-3">
-                      {con.tags.map((tag, i) => (
-                        <span key={i} className="px-1.5 py-0.5 bg-gray-100 dark:bg-slate-900 text-gray-500 rounded text-[9px] font-bold flex items-center gap-0.5 border dark:border-white/5">
-                          <Tag className="w-2.5 h-2.5" />
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Activity Insights</p>
+                  <h4 className="mt-1 text-lg font-black text-gray-900 dark:text-white">Daily / Weekly Scan Chart</h4>
                 </div>
-
-                <div className="mt-5 pt-3 border-t border-gray-100 dark:border-white/5 flex justify-end gap-1.5">
-                  <button
-                    onClick={() => handleDeleteContact(con.id)}
-                    className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-white/5 rounded cursor-pointer"
-                    title="Remove connection"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                <div className="flex gap-2">
+                  {['views', 'scans', 'downloads'].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setSelectedMetric(m as any)}
+                      className={`rounded-lg border px-3 py-1 text-xs font-bold capitalize transition-all ${selectedMetric === m ? 'border-indigo-600 bg-indigo-50/40 text-indigo-600 dark:bg-indigo-950/20 dark:text-indigo-300' : 'bg-gray-50 text-gray-500 hover:bg-gray-100 dark:bg-[#161618] dark:text-gray-300'}`}
+                    >
+                      {m}
+                    </button>
+                  ))}
                 </div>
               </div>
-            ))}
+              <InteractiveChart data={analytics?.timeline} selectedMetric={selectedMetric} />
+            </div>
+          )}
 
-            {filteredContacts.length === 0 && (
-              <div className="col-span-full p-8 text-center bg-gray-50 dark:bg-[#161618]/40 rounded-2xl border border-dashed text-gray-400">
-                <Info className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                <p className="text-xs">No saved professional connection matches found.</p>
+          <div className="rounded-2xl border border-gray-150 bg-white p-5 shadow-sm dark:border-white/5 dark:bg-[#111113]">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h4 className="text-lg font-black text-gray-900 dark:text-white">Network Pipeline</h4>
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Search, filter, and manage every submitted networking request.</p>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                <div className="relative min-w-[240px] flex-1">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={leadSearch}
+                    onChange={(e) => setLeadSearch(e.target.value)}
+                    placeholder="Search name, company, email, phone, message..."
+                    className="w-full rounded-xl border border-gray-200 bg-gray-50 py-2.5 pl-9 pr-4 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-[#161618] dark:text-white"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Filter className="h-4 w-4 text-gray-400" />
+                  <select
+                    value={leadStatusFilter}
+                    onChange={(e) => setLeadStatusFilter(e.target.value as any)}
+                    className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-[#161618] dark:text-white"
+                  >
+                    <option value="all">All statuses</option>
+                    <option value="new">New</option>
+                    <option value="contacted">Contacted</option>
+                    <option value="qualified">Qualified</option>
+                    <option value="lost">Lost</option>
+                  </select>
+                  <select
+                    value={leadSourceFilter}
+                    onChange={(e) => setLeadSourceFilter(e.target.value)}
+                    className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-[#161618] dark:text-white"
+                  >
+                    {leadSourceOptions.map((source) => (
+                      <option key={source} value={source}>
+                        {source === 'all' ? 'All sources' : source}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {filteredLeads.length === 0 ? (
+              <div className="mt-6 rounded-2xl border border-dashed border-gray-200 bg-gray-50/70 px-6 py-12 text-center dark:border-white/10 dark:bg-[#161618]/40">
+                <Users className="mx-auto mb-3 h-8 w-8 text-gray-400" />
+                <h5 className="text-lg font-black text-gray-900 dark:text-white">No contacts yet</h5>
+                <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                  Scan your QR code and submit the contact form to start building your network.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-6 overflow-x-auto">
+                <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
+                  <thead>
+                    <tr className="text-[11px] uppercase tracking-wider text-gray-400">
+                      <th className="border-b border-gray-100 px-4 py-3 font-black dark:border-white/10">Name</th>
+                      <th className="border-b border-gray-100 px-4 py-3 font-black dark:border-white/10">Company</th>
+                      <th className="border-b border-gray-100 px-4 py-3 font-black dark:border-white/10">Email</th>
+                      <th className="border-b border-gray-100 px-4 py-3 font-black dark:border-white/10">Phone</th>
+                      <th className="border-b border-gray-100 px-4 py-3 font-black dark:border-white/10">Message</th>
+                      <th className="border-b border-gray-100 px-4 py-3 font-black dark:border-white/10">Scan Date</th>
+                      <th className="border-b border-gray-100 px-4 py-3 font-black dark:border-white/10">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredLeads.map((lead) => (
+                      <tr
+                        key={lead.id}
+                        onClick={() => setSelectedLead(lead)}
+                        className="cursor-pointer transition hover:bg-gray-50 dark:hover:bg-white/5"
+                      >
+                        <td className="border-b border-gray-100 px-4 py-4 font-semibold text-gray-900 dark:border-white/5 dark:text-white">{lead.name}</td>
+                        <td className="border-b border-gray-100 px-4 py-4 text-gray-600 dark:border-white/5 dark:text-gray-300">{lead.company || 'Direct Connect'}</td>
+                        <td className="border-b border-gray-100 px-4 py-4 text-gray-600 dark:border-white/5 dark:text-gray-300">{lead.email}</td>
+                        <td className="border-b border-gray-100 px-4 py-4 text-gray-600 dark:border-white/5 dark:text-gray-300">{lead.phone || '—'}</td>
+                        <td className="border-b border-gray-100 px-4 py-4 text-gray-600 dark:border-white/5 dark:text-gray-300">
+                          <span className="line-clamp-2 max-w-xs">{lead.notes || '—'}</span>
+                        </td>
+                        <td className="border-b border-gray-100 px-4 py-4 text-gray-500 dark:border-white/5 dark:text-gray-400">{new Date(lead.createdAt).toLocaleDateString()}</td>
+                        <td className="border-b border-gray-100 px-4 py-4 dark:border-white/5">
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${
+                            lead.status === 'qualified' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-400' :
+                            lead.status === 'contacted' ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/20 dark:text-blue-400' :
+                            lead.status === 'lost' ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/20 dark:text-rose-400' :
+                            'bg-amber-50 text-amber-600 dark:bg-amber-950/20 dark:text-amber-400'
+                          }`}>
+                            {lead.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
-        </div>
-      )}
 
-      {/* Tab: Captured Leads */}
-      {activeTab === 'leads' && (
-        <div className="bg-white dark:bg-[#111113] rounded-xl border border-gray-150 dark:border-white/5 overflow-hidden shadow-sm">
-          <div className="p-4 bg-gray-50/50 dark:bg-[#161618]/40 border-b border-gray-150 dark:border-white/5">
-            <h4 className="font-extrabold text-sm text-gray-900 dark:text-white">Active Connection Prospect Leads</h4>
-            <p className="text-xs text-gray-500">Track inquiries submitted by professionals viewing your dynamic business cards.</p>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-gray-50 dark:bg-[#161618] text-gray-400 uppercase font-black border-b border-gray-100 dark:border-white/5">
-                  <th className="p-3">Prospect Details</th>
-                  <th className="p-3">Company & Notes</th>
-                  <th className="p-3">Source Channel</th>
-                  <th className="p-3">Timestamp</th>
-                  <th className="p-3">Conversion Status</th>
-                  <th className="p-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-white/5">
-                {leads.map((ld) => (
-                  <tr key={ld.id} className="hover:bg-gray-50/40 dark:hover:bg-white/5 transition-all">
-                    <td className="p-3 font-semibold text-gray-900 dark:text-white">
-                      <p>{ld.name}</p>
-                      <span className="text-[10px] text-gray-400 font-mono font-medium">{ld.email}</span>
-                      {ld.phone && <span className="block text-[9px] text-gray-500 mt-0.5">{ld.phone}</span>}
-                    </td>
-                    <td className="p-3 text-gray-600 dark:text-gray-300 max-w-sm">
-                      <p className="font-bold text-[10px] text-indigo-600">{ld.company || 'Direct Connect'}</p>
-                      <span className="opacity-80 italic">"{ld.notes}"</span>
-                    </td>
-                    <td className="p-3 text-gray-400">
-                      {ld.source}
-                    </td>
-                    <td className="p-3 text-gray-400">
-                      {new Date(ld.createdAt).toLocaleDateString()}
-                    </td>
-                    <td className="p-3">
-                      <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
-                        ld.status === 'qualified' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-400' :
-                        ld.status === 'contacted' ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/20 dark:text-blue-400' :
-                        ld.status === 'lost' ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/20 dark:text-rose-400' :
-                        'bg-amber-50 text-amber-600 dark:bg-amber-950/20 dark:text-amber-400'
-                      }`}>
-                        {ld.status}
-                      </span>
-                    </td>
-                    <td className="p-3 text-right">
-                      <select
-                        value={ld.status}
-                        onChange={e => handleLeadStatusToggle(ld.id, e.target.value)}
-                        className="p-1 rounded text-[10px] bg-transparent border border-gray-250 dark:border-white/10 text-gray-600 dark:text-white cursor-pointer focus:outline-none"
-                      >
-                        <option value="new">New</option>
-                        <option value="contacted">Contacted</option>
-                        <option value="qualified">Qualified</option>
-                        <option value="lost">Lost</option>
-                      </select>
-                    </td>
-                  </tr>
-                ))}
-
-                {leads.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="p-8 text-center text-gray-400 italic">
-                      No captured connection prospects yet. Share your card to start swiping contacts.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Tab: Performance Analytics */}
-      {activeTab === 'analytics' && analytics && (
-        <div className="space-y-6">
-          {/* Timeline chart wrapper */}
-          <div className="bg-white dark:bg-[#111113] rounded-2xl border border-gray-150 dark:border-white/5 p-6 shadow-sm">
-            <div className="flex gap-2 mb-4">
-              {['views', 'scans', 'downloads'].map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setSelectedMetric(m as any)}
-                  className={`px-3 py-1 bg-gray-50 hover:bg-gray-100 border text-xs font-bold rounded-lg capitalize cursor-pointer transition-all ${selectedMetric === m ? 'border-indigo-600 bg-indigo-50/40 text-indigo-600' : 'text-gray-500'}`}
-                >
-                  {m} Timeline
-                </button>
-              ))}
-            </div>
-
-            <InteractiveChart data={analytics.timeline} selectedMetric={selectedMetric} />
-          </div>
-
-          {/* Demographics distributions */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Country */}
-            <div className="bg-white dark:bg-[#111113] p-5 rounded-xl border border-gray-150 dark:border-white/5 shadow-sm">
-              <h4 className="text-xs uppercase font-extrabold text-gray-400 mb-3 flex items-center gap-1">
-                <Globe className="w-4 h-4 text-indigo-500" />
-                Geographical Views
-              </h4>
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {analytics.countries?.map((c: any, idx: number) => (
-                  <div key={idx} className="flex justify-between text-xs border-b border-gray-50 dark:border-white/5 pb-1.5">
-                    <span className="font-semibold text-gray-700 dark:text-gray-300">{c.name}</span>
-                    <span className="font-mono font-bold text-gray-900 dark:text-white">{c.value} views</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Devices */}
-            <div className="bg-white dark:bg-[#111113] p-5 rounded-xl border border-gray-150 dark:border-white/5 shadow-sm">
-              <h4 className="text-xs uppercase font-extrabold text-gray-400 mb-3 flex items-center gap-1">
-                <Smartphone className="w-4 h-4 text-emerald-500" />
-                Device Distribution
-              </h4>
-              <div className="space-y-2">
-                {analytics.devices?.map((d: any, idx: number) => {
-                  const icons: Record<string, any> = {
-                    mobile: <Smartphone className="w-3.5 h-3.5" />,
-                    desktop: <Laptop className="w-3.5 h-3.5" />,
-                    tablet: <Tablet className="w-3.5 h-3.5" />
-                  };
-                  return (
-                    <div key={idx} className="flex justify-between items-center text-xs border-b border-gray-50 dark:border-white/5 pb-1.5">
-                      <span className="font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5 capitalize">
-                        {icons[d.name] || <Smartphone className="w-3.5 h-3.5" />}
-                        {d.name}
-                      </span>
-                      <span className="font-mono font-bold text-gray-900 dark:text-white">{d.value}</span>
+          {recentScans.length > 0 && (
+            <div className="rounded-2xl border border-gray-150 bg-white p-5 shadow-sm dark:border-white/5 dark:bg-[#111113]">
+              <h4 className="mb-4 text-lg font-black text-gray-900 dark:text-white">Recent Scans</h4>
+              <div className="space-y-3">
+                {recentScans.map((scan: any) => (
+                  <div key={scan.id} className="rounded-xl border border-gray-100 bg-gray-50/70 p-4 dark:border-white/5 dark:bg-[#161618]/40">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="font-bold text-gray-900 dark:text-white">{scan.cardName}</p>
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {scan.city}, {scan.country} • {scan.device} • {scan.referrer}
+                        </p>
+                      </div>
+                      <span className="text-[11px] font-mono text-gray-400">{new Date(scan.timestamp).toLocaleString()}</span>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Referral / Source Traffic */}
-            <div className="bg-white dark:bg-[#111113] p-5 rounded-xl border border-gray-150 dark:border-white/5 shadow-sm">
-              <h4 className="text-xs uppercase font-extrabold text-gray-400 mb-3 flex items-center gap-1">
-                <Search className="w-4 h-4 text-amber-500" />
-                Referrer Channels
-              </h4>
-              <div className="space-y-2">
-                {analytics.referrers?.map((r: any, idx: number) => (
-                  <div key={idx} className="flex justify-between text-xs border-b border-gray-50 dark:border-white/5 pb-1.5">
-                    <span className="font-semibold text-gray-700 dark:text-gray-300">{r.name}</span>
-                    <span className="font-mono font-bold text-gray-900 dark:text-white">{r.value}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {selectedLead && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={() => setSelectedLead(null)}>
+          <div className="w-full max-w-2xl rounded-3xl border border-gray-200 bg-white shadow-2xl dark:border-white/10 dark:bg-[#111113]" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-5 dark:border-white/10">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-indigo-600 dark:text-indigo-400">Contact Profile</p>
+                <h4 className="mt-2 text-2xl font-black text-gray-900 dark:text-white">{selectedLead.name}</h4>
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Submitted via {selectedLead.source}</p>
+              </div>
+              <button
+                onClick={() => setSelectedLead(null)}
+                className="rounded-full border border-gray-200 p-2 text-gray-500 transition hover:bg-gray-50 dark:border-white/10 dark:text-gray-300 dark:hover:bg-white/5"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="grid gap-6 px-6 py-6 md:grid-cols-[1.1fr_0.9fr]">
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 dark:border-white/5 dark:bg-[#161618]/40">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Message</p>
+                  <p className="mt-2 text-sm leading-6 text-gray-700 dark:text-gray-300">{selectedLead.notes || 'No message provided.'}</p>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-gray-100 p-4 dark:border-white/5">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Email</p>
+                    <p className="mt-2 break-all text-sm font-semibold text-gray-900 dark:text-white">{selectedLead.email}</p>
+                  </div>
+                  <div className="rounded-2xl border border-gray-100 p-4 dark:border-white/5">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Phone</p>
+                    <p className="mt-2 text-sm font-semibold text-gray-900 dark:text-white">{selectedLead.phone || 'Not provided'}</p>
+                  </div>
+                  <div className="rounded-2xl border border-gray-100 p-4 dark:border-white/5">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Company</p>
+                    <p className="mt-2 text-sm font-semibold text-gray-900 dark:text-white">{selectedLead.company || 'Direct Connect'}</p>
+                  </div>
+                  <div className="rounded-2xl border border-gray-100 p-4 dark:border-white/5">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Scan Date</p>
+                    <p className="mt-2 text-sm font-semibold text-gray-900 dark:text-white">{new Date(selectedLead.createdAt).toLocaleString()}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-gray-100 p-4 dark:border-white/5">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Status</p>
+                  <select
+                    value={selectedLead.status}
+                    onChange={async (e) => {
+                      const nextStatus = e.target.value;
+                      await handleLeadStatusToggle(selectedLead.id, nextStatus);
+                      setSelectedLead({ ...selectedLead, status: nextStatus as Lead['status'] });
+                    }}
+                    className="mt-3 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-white/10 dark:bg-[#161618] dark:text-white"
+                  >
+                    <option value="new">New</option>
+                    <option value="contacted">Contacted</option>
+                    <option value="qualified">Qualified</option>
+                    <option value="lost">Lost</option>
+                  </select>
+                </div>
+
+                <div className="rounded-2xl border border-gray-100 p-4 dark:border-white/5">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Quick Actions</p>
+                  <div className="mt-3 space-y-2">
+                    <a
+                      href={`mailto:${selectedLead.email}`}
+                      className="flex items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800"
+                    >
+                      <Mail className="h-4 w-4" />
+                      Send Email
+                    </a>
+                    {selectedLead.phone && (
+                      <a
+                        href={`tel:${selectedLead.phone}`}
+                        className="flex items-center justify-center gap-2 rounded-xl border border-gray-200 px-4 py-3 text-sm font-bold text-gray-700 transition hover:bg-gray-50 dark:border-white/10 dark:text-gray-200 dark:hover:bg-white/5"
+                      >
+                        <Phone className="h-4 w-4" />
+                        Call Contact
+                      </a>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>

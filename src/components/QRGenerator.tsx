@@ -16,7 +16,7 @@ export const QRGenerator: React.FC<QRGeneratorProps> = ({ card, onDownload }) =>
   const [copied, setCopied] = useState(false);
   const [svgString, setSvgString] = useState('');
 
-  const cardUrl = getPublicCardUrl(card.id);
+  const cardUrl = getPublicCardUrl(card.publicId);
 
   useEffect(() => {
     if (!canvasRef.current) return;

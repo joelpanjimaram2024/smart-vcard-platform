@@ -14,11 +14,15 @@ interface LandingPageProps {
 export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onLogin }) => {
   const [sandboxCard, setSandboxCard] = useState<BusinessCard>({
     id: 'sandbox_try',
+    publicId: 'sandbox-eleanor-vance',
+    slug: 'eleanor-vance',
     userId: 'guest',
+    companyName: 'Vance Creative',
     name: 'Eleanor Vance',
     title: 'Brand Strategist',
     designation: 'Creative Director & Designer',
     department: 'Marketing Creative Group',
+    address: '18 Madison Ave, New York, NY',
     bio: 'Designing modern corporate identities and interactive user experiences for forward-thinking tech enterprises globally.',
     templateId: 'glass',
     theme: {

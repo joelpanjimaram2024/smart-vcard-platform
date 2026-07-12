@@ -10,6 +10,7 @@ export function downloadVCard(card: BusinessCard) {
     `N:${card.name};;;;`,
     `FN:${card.name}`,
     `TITLE:${card.designation}`,
+    `ORG:${card.companyName || ''}`,
     `DEPT:${card.department || ''}`,
   ];
 
@@ -23,6 +24,10 @@ export function downloadVCard(card: BusinessCard) {
 
   if (card.socialLinks.website) {
     vcardParts.push(`URL:${card.socialLinks.website}`);
+  }
+
+  if (card.address) {
+    vcardParts.push(`ADR;TYPE=WORK:;;${card.address};;;;`);
   }
 
   // Add notes/bio
