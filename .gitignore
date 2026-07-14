@@ -1,8 +1,16 @@
 node_modules/
 build/
 dist/
+frontend/dist/
+frontend/.output/
+frontend/.tanstack/
+frontend/.vinxi/
+frontend/.nitro/
+frontend/.wrangler/
+frontend/.dev.vars
 coverage/
 .DS_Store
 *.log
 .env*
 !.env.example
+server.log
