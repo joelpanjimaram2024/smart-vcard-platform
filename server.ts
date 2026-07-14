@@ -1802,21 +1802,20 @@ async function startServer() {
   });
 
   if (!isProductionRuntime) {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
+    // In development, the frontend is served by its own Vite dev server
+    // (run via `npm run dev`). The backend API is served separately.
+    console.log('Development mode: frontend served by TanStack Start dev server, backend API on port ' + PORT);
   } else {
-    const distPath = join(process.cwd(), 'dist');
-    const assetsPath = join(distPath, 'assets');
+    // TanStack Start / Nitro outputs to .output/public/ for client assets
+    const outputPath = join(process.cwd(), 'frontend', '.output', 'public');
+    const assetsPath = join(outputPath, 'assets');
 
     app.use('/assets', express.static(assetsPath, {
       immutable: true,
       maxAge: '1y',
     }));
 
-    app.use(express.static(distPath, {
+    app.use(express.static(outputPath, {
       index: false,
       setHeaders: (res, filePath) => {
         if (filePath.endsWith('.html')) {
@@ -1825,10 +1824,10 @@ async function startServer() {
       },
     }));
 
-    // Serve index.html for SPA routes in production
+    // SPA fallback for all non-API routes
     app.get('*', (req, res) => {
       res.setHeader('Cache-Control', 'no-store');
-      res.sendFile(join(distPath, 'index.html'));
+      res.sendFile(join(outputPath, 'index.html'));
     });
   }
 
