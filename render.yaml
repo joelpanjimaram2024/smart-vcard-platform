@@ -2,7 +2,7 @@ services:
   - type: web
     name: smart-vcard-platform
     env: node
-    buildCommand: npm ci && npm run build
+    buildCommand: cd frontend && npm install && npm run build && cd .. && npm install && npm run build:server
     startCommand: npm run start
     envVars:
       - key: NODE_ENV
